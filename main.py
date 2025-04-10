@@ -4,6 +4,8 @@ import socket
 import threading
 import pickle
 import time
+from NetworkClient import * 
+from NetworkHost import * 
 
 # Initialisation de Pygame
 pygame.init()
