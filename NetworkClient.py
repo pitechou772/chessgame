@@ -116,23 +116,29 @@ class NetworkClient:
                 print(f"Erreur lors de l'envoi du mouvement: {e}")
 
     def send_game_state(self):
-        """Envoie l'état complet du jeu au serveur"""
-        if self.socket:
-            try:
-                game_state = {
-                    'board': self.game.board,
-                    'turn': self.game.turn,
-                    'king_positions': self.game.king_positions,
-                    'in_check': self.game.in_check,
-                    'castling_rights': self.game.castling_rights,
-                    'en_passant_target': self.game.en_passant_target,
-                    'game_status': self.game.game_status
-                }
-                data = pickle.dumps(game_state)
-                self.socket.send(data)
-                print("État du jeu envoyé au serveur")
-            except Exception as e:
-                print(f"Erreur lors de l'envoi de l'état du jeu: {e}")
+        """Envoie l'état complet du jeu"""
+        game_state = {
+            'board': self.game.board, 
+            'turn': self.game.turn,
+            'castling_rights': self.game.castling_rights,
+            'en_passant_target': self.game.en_passant_target,
+            'king_positions': self.game.king_positions,
+            'in_check': self.game.in_check,
+            'game_status': self.game.game_status,
+            # Ajouter les informations de l'horloge
+            'clock': {
+                'white_time': self.game.clock.white_time if self.game.clock else None,
+                'black_time': self.game.clock.black_time if self.game.clock else None,
+                'increment': self.game.clock.increment if self.game.clock else None,
+                'active_color': self.game.clock.active_color if self.game.clock else None,
+                'is_running': self.game.clock.is_running if self.game.clock else False,
+                'game_over': self.game.clock.game_over if self.game.clock else False,
+                'timeout_color': self.game.clock.timeout_color if self.game.clock else None
+            },
+        'time_mode': self.game.time_mode,
+        'game_started': self.game.game_started
+    }
+        self.connection.send(pickle.dumps(game_state))
 
     def update_game_from_network(self, start, end):
         """Met à jour le jeu avec un mouvement reçu du réseau"""

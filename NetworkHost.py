@@ -4,6 +4,7 @@ import socket
 import threading
 import pickle
 import time
+
 # Classe pour gérer le réseau (hôte)
 class NetworkHost:
     def __init__(self, game, port):
@@ -101,24 +102,29 @@ class NetworkHost:
             self.thread.join(2.0)  # Attente maximale de 2 secondes
 
     def send_game_state(self):
-        """Envoie l'état complet du jeu au client"""
-        if self.client:
-            try:
-                game_state = {
-                    'board': self.game.board,
-                    'turn': self.game.turn,
-                    'king_positions': self.game.king_positions,
-                    'in_check': self.game.in_check,
-                    'castling_rights': self.game.castling_rights,
-                    'en_passant_target': self.game.en_passant_target,
-                    'game_status': self.game.game_status
-                }
-                data = pickle.dumps(game_state)
-                self.client.send(data)
-                print("État du jeu envoyé au client")
-            except Exception as e:
-                print(f"Erreur lors de l'envoi de l'état du jeu: {e}")
-
+        """Envoie l'état complet du jeu"""
+        game_state = {
+            'board': self.game.board, 
+            'turn': self.game.turn,
+            'castling_rights': self.game.castling_rights,
+            'en_passant_target': self.game.en_passant_target,
+            'king_positions': self.game.king_positions,
+            'in_check': self.game.in_check,
+            'game_status': self.game.game_status,
+            # Ajouter les informations de l'horloge
+            'clock': {
+                'white_time': self.game.clock.white_time if self.game.clock else None,
+                'black_time': self.game.clock.black_time if self.game.clock else None,
+                'increment': self.game.clock.increment if self.game.clock else None,
+                'active_color': self.game.clock.active_color if self.game.clock else None,
+                'is_running': self.game.clock.is_running if self.game.clock else False,
+                'game_over': self.game.clock.game_over if self.game.clock else False,
+                'timeout_color': self.game.clock.timeout_color if self.game.clock else None
+            },
+        'time_mode': self.game.time_mode,
+        'game_started': self.game.game_started
+    }
+        self.connection.send(pickle.dumps(game_state))
     def send_move(self, start, end):
         """Envoie un mouvement au client"""
         if self.client:
@@ -170,4 +176,39 @@ class NetworkHost:
         
         # Force le rafraîchissement de l'affichage
         pygame.display.flip()
-
+def process_data(self, data):
+    """Traite les données reçues"""
+    try:
+        data = pickle.loads(data)
+        if isinstance(data, dict):  # État complet du jeu
+            self.game.board = data['board']
+            self.game.turn = data['turn']
+            self.game.castling_rights = data['castling_rights']
+            self.game.en_passant_target = data['en_passant_target']
+            self.game.king_positions = data['king_positions']
+            self.game.in_check = data['in_check']
+            self.game.game_status = data['game_status']
+            
+            # Traiter les informations de l'horloge
+            if 'time_mode' in data and data['time_mode'] and not self.game.clock:
+                # Configurer l'horloge si elle n'existe pas encore
+                self.game.setup_clock(data['time_mode'])
+            
+            if 'clock' in data and data['clock'] and self.game.clock:
+                # Mettre à jour l'état de l'horloge
+                self.game.clock.white_time = data['clock']['white_time']
+                self.game.clock.black_time = data['clock']['black_time']
+                self.game.clock.increment = data['clock']['increment']
+                self.game.clock.active_color = data['clock']['active_color']
+                self.game.clock.is_running = data['clock']['is_running']
+                self.game.clock.game_over = data['clock']['game_over']
+                self.game.clock.timeout_color = data['clock']['timeout_color']
+                
+                # Mettre à jour l'horloge locale
+                self.game.clock.last_update = time.time()
+            
+            # Mettre à jour l'état de démarrage du jeu
+            if 'game_started' in data:
+                self.game.game_started = data['game_started']
+    except Exception as e:
+        print(f"Erreur lors du traitement des données: {e}")
