@@ -15,77 +15,51 @@ class NetworkHost:
         self.client = None
         self.thread = None
         self.running = True
-
+    def send_chat_message(self, message):
+        """Envoie un message de chat"""
+        if hasattr(self, 'client') and self.client:  # Pour NetworkHost
+            try:
+                data = pickle.dumps({'type': 'chat', 'message': message})
+                self.client.send(data)
+                print(f"Message envoyé: {message}")
+            except Exception as e:
+                print(f"Erreur lors de l'envoi du message: {e}")
+        elif hasattr(self, 'socket') and self.socket:  # Pour NetworkClient
+            try:
+                data = pickle.dumps({'type': 'chat', 'message': message})
+                self.socket.send(data)
+                print(f"Message envoyé: {message}")
+            except Exception as e:  
+                print(f"Erreur lors de l'envoi du message: {e}")
     def start(self):
         """Démarre le serveur et attend une connexion"""
         self.thread = threading.Thread(target=self.run)
         self.thread.daemon = True
         self.thread.start()
         return True
-
+    def handle_message(self, message):
+        """Gère les messages reçus du client"""
+        if message.get("type") == "chat":
+            chat_message = message.get("message")
+            print(f"Message de chat reçu: {chat_message}")
+            self.game.chat.add_message("Adversaire", chat_message)
     def run(self):
         """Exécute le serveur et gère les connexions"""
         try:
-            # Crée et configure le socket serveur
             self.server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             self.server.bind(('', self.port))
             self.server.listen(1)
             print(f"Serveur démarré sur le port {self.port}, en attente de connexion...")
 
-            # Attente limitée pour permettre de vérifier self.running
-            self.server.settimeout(1.0)
-
-            # Attente d'une connexion client
             while self.running:
                 try:
                     self.client, addr = self.server.accept()
                     print(f"Client connecté: {addr}")
-                    
-                    # Envoie l'état initial du jeu au client
-                    self.send_game_state()
-                    
-                    # Boucle pour recevoir les messages du client
-                    self.client.settimeout(0.1)
-                    while self.running:
-                        try:
-                            data = self.client.recv(4096)  # Augmenté pour les états de jeu
-                            if not data:
-                                break
-                                
-                            # Essaie d'abord de décoder comme un mouvement
-                            try:
-                                move = pickle.loads(data)
-                                if isinstance(move, tuple) and len(move) == 2:
-                                    start, end = move
-                                    if isinstance(start, tuple) and isinstance(end, tuple):
-                                        print(f"Mouvement reçu: {start} -> {end}")
-                                        self.update_game_from_network(start, end)
-                                elif isinstance(move, dict) and 'board' in move:
-                                    print("État de jeu complet reçu")
-                                    self.update_full_game_state(move)
-                            except Exception as e:
-                                print(f"Erreur lors du traitement des données: {e}")
-                                
-                        except socket.timeout:
-                            # Timeout est normal, continue la boucle
-                            continue
-                        except Exception as e:
-                            print(f"Erreur lors de la réception des données du client: {e}")
-                            break
-                            
-                    if self.client:
-                        self.client.close()
-                        self.client = None
-                    print("Client déconnecté, en attente d'une nouvelle connexion...")
-                    
+                    self.send_game_state()  # Envoie l'état initial du jeu
+                    self.handle_client()
                 except socket.timeout:
-                    # Timeout est normal, continue la boucle
                     continue
-                except Exception as e:
-                    print(f"Erreur lors de l'attente de connexion: {e}")
-                    break
-                    
         except Exception as e:
             print(f"Erreur serveur: {e}")
         finally:
@@ -102,29 +76,26 @@ class NetworkHost:
             self.thread.join(2.0)  # Attente maximale de 2 secondes
 
     def send_game_state(self):
-        """Envoie l'état complet du jeu"""
+        """Envoie l'état complet du jeu au client"""
+        if not self.client:
+            return
+
         game_state = {
-            'board': self.game.board, 
+            'board': self.game.board,
             'turn': self.game.turn,
+            'king_positions': self.game.king_positions,
             'castling_rights': self.game.castling_rights,
             'en_passant_target': self.game.en_passant_target,
-            'king_positions': self.game.king_positions,
             'in_check': self.game.in_check,
-            'game_status': self.game.game_status,
-            # Ajouter les informations de l'horloge
-            'clock': {
-                'white_time': self.game.clock.white_time if self.game.clock else None,
-                'black_time': self.game.clock.black_time if self.game.clock else None,
-                'increment': self.game.clock.increment if self.game.clock else None,
-                'active_color': self.game.clock.active_color if self.game.clock else None,
-                'is_running': self.game.clock.is_running if self.game.clock else False,
-                'game_over': self.game.clock.game_over if self.game.clock else False,
-                'timeout_color': self.game.clock.timeout_color if self.game.clock else None
-            },
-        'time_mode': self.game.time_mode,
-        'game_started': self.game.game_started
-    }
-        self.connection.send(pickle.dumps(game_state))
+            'game_status': self.game.game_status
+        }
+
+        try:
+            self.client.sendall(pickle.dumps(game_state))
+            print("État du jeu envoyé au client")
+        except Exception as e:
+            print(f"Erreur lors de l'envoi de l'état du jeu: {e}")
+
     def send_move(self, start, end):
         """Envoie un mouvement au client"""
         if self.client:
@@ -159,22 +130,7 @@ class NetworkHost:
         
         print(f"État après le mouvement: tour = {self.game.turn}")
         print(f"Pièce déplacée vers: {self.game.board[end[0]][end[1]]}")
-    def send_chat_message(self, message):
-        """Envoie un message de chat"""
-        if hasattr(self, 'client') and self.client:  # Pour NetworkHost
-            try:
-                data = pickle.dumps({'type': 'chat', 'message': message})
-                self.client.send(data)
-                print(f"Message envoyé: {message}")
-            except Exception as e:
-                print(f"Erreur lors de l'envoi du message: {e}")
-        elif hasattr(self, 'socket') and self.socket:  # Pour NetworkClient
-            try:
-                data = pickle.dumps({'type': 'chat', 'message': message})
-                self.socket.send(data)
-                print(f"Message envoyé: {message}")
-            except Exception as e:
-                print(f"Erreur lors de l'envoi du message: {e}")
+    
         # Met à jour l'affichage
         pygame.display.flip()
 

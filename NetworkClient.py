@@ -28,9 +28,33 @@ class NetworkClient:
 
     def start(self):
         """Démarre le thread du client"""
-        self.thread = threading.Thread(target=self.run)
+        self.running = True
+        self.thread = threading.Thread(target=self.listen)
         self.thread.daemon = True
         self.thread.start()
+
+    def listen(self):
+        """Écoute les messages du serveur"""
+        try:
+            self.socket.settimeout(0.1)  # Timeout pour vérifier régulièrement self.running
+            while self.running:
+                try:
+                    data = self.socket.recv(4096)  # Taille maximale des données reçues
+                    if not data:
+                        break
+
+                    # Traite les données reçues
+                    message = pickle.loads(data)
+                    self.handle_message(message)
+                except socket.timeout:
+                    continue  # Timeout est normal, continue la boucle
+                except Exception as e:
+                    print(f"Erreur lors de la réception des données: {e}")
+                    break
+        except Exception as e:
+            print(f"Erreur dans listen: {e}")
+        finally:
+            self.stop()
 
     def run(self):
         """Exécute le client et gère les messages du serveur"""
@@ -91,10 +115,13 @@ class NetworkClient:
             print("Client arrêté")
 
     def stop(self):
-        """Arrête le client"""
+        """Arrête le serveur ou le client"""
+        if not self.running:
+            return
         self.running = False
-        if self.thread:
-            self.thread.join(2.0)  # Attente maximale de 2 secondes
+        if self.thread and self.thread.is_alive():
+            self.thread.join(timeout=1)
+        print("Serveur ou client arrêté")
 
     def receive_game_state(self):
         """Reçoit l'état complet du jeu depuis le serveur"""
@@ -116,8 +143,6 @@ class NetworkClient:
         self.game.en_passant_target = game_state['en_passant_target']
         self.game.game_status = game_state['game_status']
         print("État complet du jeu mis à jour")
-        
-        # Force le rafraîchissement de l'affichage
         pygame.display.flip()
 
     def send_move(self, start, end):
@@ -130,6 +155,13 @@ class NetworkClient:
                 print(f"Mouvement envoyé: {start} -> {end}")
             except Exception as e:
                 print(f"Erreur lors de l'envoi du mouvement: {e}")
+
+    def handle_message(self, message):
+        """Gère les messages reçus du serveur"""
+        if message.get("type") == "chat":
+            chat_message = message.get("message")
+            print(f"Message de chat reçu: {chat_message}")
+            self.game.chat.add_message("Adversaire", chat_message)
 
     def send_game_state(self):
         """Envoie l'état complet du jeu"""
@@ -182,19 +214,3 @@ class NetworkClient:
         
         # Met à jour l'affichage
         pygame.display.flip()
-    def send_chat_message(self, message):
-        """Envoie un message de chat"""
-        if hasattr(self, 'client') and self.client:  # Pour NetworkHost
-            try:
-                data = pickle.dumps({'type': 'chat', 'message': message})
-                self.client.send(data)
-                print(f"Message envoyé: {message}")
-            except Exception as e:
-                print(f"Erreur lors de l'envoi du message: {e}")
-        elif hasattr(self, 'socket') and self.socket:  # Pour NetworkClient
-            try:
-                data = pickle.dumps({'type': 'chat', 'message': message})
-                self.socket.send(data)
-                print(f"Message envoyé: {message}")
-            except Exception as e:
-                print(f"Erreur lors de l'envoi du message: {e}")

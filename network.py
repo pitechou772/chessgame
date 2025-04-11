@@ -1,4 +1,3 @@
-
 # network.py
 import socket
 import threading
@@ -13,7 +12,24 @@ class Network:
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.running = False
         self.thread = None
-    
+
+    def send_chat_message(self, message):
+        """Envoie un message de chat"""
+        if hasattr(self, 'client') and self.client:  # Pour NetworkHost
+            try:
+                data = pickle.dumps({'type': 'chat', 'message': message})
+                self.client.send(data)
+                print(f"Message envoyé: {message}")
+            except Exception as e:
+                print(f"Erreur lors de l'envoi du message: {e}")
+        elif hasattr(self, 'socket') and self.socket:  # Pour NetworkClient
+            try:
+                data = pickle.dumps({'type': 'chat', 'message': message})
+                self.socket.send(data)
+                print(f"Message envoyé: {message}")
+            except Exception as e:
+                print(f"Erreur lors de l'envoi du message: {e}")
+
     def start(self):
         """Démarre le thread d'écoute"""
         self.running = True
@@ -22,15 +38,14 @@ class Network:
         self.thread.start()
     
     def stop(self):
-        """Arrête le thread d'écoute et ferme la socket"""
+        """Arrête le serveur ou le client"""
+        if not self.running:
+            return
         self.running = False
-        if self.thread:
+        if self.thread and self.thread != threading.current_thread():
             self.thread.join(timeout=1)
-        try:
-            self.socket.close()
-        except:
-            pass
-    
+        print("Serveur ou client arrêté")
+        
     def listen(self):
         """Méthode abstraite pour l'écoute réseau"""
         pass
@@ -83,20 +98,21 @@ class NetworkHost(Network):
                     return
             
             # Écoute les messages du client
-            self.client_socket.settimeout(1)
-            while self.running:
-                try:
-                    data = self.client_socket.recv(4096)
-                    if not data:
+            if self.client_socket:  # Vérifie que le client est connecté
+                self.client_socket.settimeout(1)
+                while self.running:
+                    try:
+                        data = self.client_socket.recv(4096)
+                        if not data:
+                            break
+                        
+                        message = pickle.loads(data)
+                        self.handle_message(message)
+                    except socket.timeout:
+                        continue
+                    except Exception as e:
+                        print(f"Erreur lors de la réception des données: {e}")
                         break
-                    
-                    message = pickle.loads(data)
-                    self.handle_message(message)
-                except socket.timeout:
-                    continue
-                except Exception as e:
-                    print(f"Erreur lors de la réception des données: {e}")
-                    break
         finally:
             self.stop()
     
@@ -194,23 +210,21 @@ class NetworkClient(Network):
             return False
     
     def listen(self):
-        """Écoute les messages du serveur"""
-        self.socket.settimeout(1)
-        while self.running:
-            try:
-                data = self.socket.recv(4096)
-                if not data:
-                    break
-                
-                message = pickle.loads(data)
-                self.handle_message(message)
-            except socket.timeout:
-                continue
-            except Exception as e:
-                print(f"Erreur lors de la réception des données: {e}")
-                break
+        try:
+            while self.running:
+                try:
+                    self.client_socket, addr = self.server_socket.accept()
+                    print(f"Client connecté depuis {addr}")
+                    if self.client_socket:
+                        self.client_socket.settimeout(1)
+                        self.handle_client(self.client_socket)
+                except socket.timeout:
+                    continue
+        except Exception as e:
+            print(f"Erreur dans listen: {e}")
+            self.stop()
         
-        self.stop()
+        
     
     def handle_message(self, message):
         """Gère les messages reçus du serveur"""

@@ -7,7 +7,7 @@ import pickle
 from chess_pieces import create_piece
 from chess_clock import ChessClock
 from network import NetworkHost, NetworkClient
-from chatsyteme import ChatSystem
+from chatsysteme import ChatSystem
 
 pygame.init()
 WIDTH, HEIGHT = (600, 600)
@@ -408,6 +408,7 @@ def main():
     clock = pygame.time.Clock()
     running = True
     menu_active = True
+    selected_mode = None
     
     # Polices
     font = pygame.font.SysFont('Arial', 36)
@@ -441,7 +442,11 @@ def main():
             WINDOW.blit(quit_text, (WIDTH // 2 - quit_text.get_width() // 2, 410))
             
             pygame.display.flip()
-            
+            if selected_mode:
+                game.setup_clock(selected_mode)
+                if game.host_game():
+                    menu_active = False  # Quitter le menu principal
+                    running = True   
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     running = False
@@ -575,6 +580,8 @@ def main():
                         if running and host_ip:
                             if game.join_game(host_ip):
                                 menu_active = False
+                                running = True
+                                game.start_game()
                     
                     # Quitter le jeu
                     elif quit_button.collidepoint(mouse_pos):
@@ -582,35 +589,35 @@ def main():
                         menu_active = False
             
             clock.tick(30)
-  
-        while not menu_active and running:
-            for event in pygame.event.get():
-                if event.type == pygame.QUIT:
-                    running = False
-                    
-                # Traite les événements du chat d'abord
-                if game.network and hasattr(game, 'chat'):
-                    if game.chat.handle_event(event, game.network):
-                        continue  # L'événement a été traité par le chat
-                    
-                if event.type == pygame.MOUSEBUTTONDOWN:
-                    if event.button == 1:
-                        game.select_piece(event.pos)
-                if event.type == pygame.KEYDOWN:
-                    if event.key == pygame.K_ESCAPE:
-                        if game.network:
-                            game.network.stop()
-                            game.network = None
-                        if game.clock:
-                            game.clock.stop()
-                        menu_active = True
-                    elif event.key == pygame.K_TAB:  # Touche pour activer/désactiver le chat
-                        if hasattr(game, 'chat'):
-                            game.chat.chat_visible = not game.chat.chat_visible
-        game.draw_board(WINDOW)
-        pygame.display.flip()
-        clock.tick(60)
-        game.network.stop()
+            
+            while not menu_active and running:
+                for event in pygame.event.get():
+                    if event.type == pygame.QUIT:
+                        running = False
+
+                    if game.network and hasattr(game, 'chat'):
+                        if game.chat.handle_event(event, game.network):
+                            continue
+
+                    if event.type == pygame.MOUSEBUTTONDOWN:
+                        if event.button == 1:
+                            game.select_piece(event.pos)
+
+                    if event.type == pygame.KEYDOWN:
+                        if event.key == pygame.K_ESCAPE:
+                            if game.network:
+                                game.network.stop()
+                                game.network = None
+                            if game.clock:
+                                game.clock.stop()
+                            menu_active = True
+                        elif event.key == pygame.K_TAB:
+                            if hasattr(game, 'chat'):
+                                game.chat.chat_visible = not game.chat.chat_visible
+
+                game.draw_board(WINDOW)
+                pygame.display.flip()
+                clock.tick(60)
     pygame.quit()
     sys.exit()
 if __name__ == '__main__':

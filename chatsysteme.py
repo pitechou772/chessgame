@@ -89,10 +89,45 @@ class ChatSystem:
         elif event.type == pygame.KEYDOWN and self.input_active and self.chat_visible:
             if event.key == pygame.K_RETURN:
                 if self.input_text.strip():  # Vérifie que le message n'est pas vide
-                    # Envoie le message
-                    network.send_chat_message(self.input_text)
-                    # Ajoute le message localement
-                    self.add_message("Vous", self.input_text)
+                    try:
+                        # Envoie le message
+                        network.send_chat_message(self.input_text)
+                        # Ajoute le message localement
+                        self.add_message("Vous", self.input_text)
+                    except Exception as e:
+                        print(f"Erreur lors de l'envoi du message : {e}")
+                    self.input_text = ""
+                self.input_active = False
+                return True
+            elif event.key == pygame.K_BACKSPACE:
+                self.input_text = self.input_text[:-1]
+                return True
+            elif event.key == pygame.K_ESCAPE:
+                self.input_active = False
+                return True
+            else:
+                # Limite la longueur du texte
+                if len(self.input_text) < 50:  
+                    self.input_text += event.unicode
+                return True
+            
+                return False
+                
+            # Vérifie si on clique sur la zone de saisie
+            input_rect = pygame.Rect(10, window_height - 30, window_width - 90, 25)
+            self.input_active = input_rect.collidepoint(mouse_pos)
+            return self.input_active
+            
+        elif event.type == pygame.KEYDOWN and self.input_active and self.chat_visible:
+            if event.key == pygame.K_RETURN:
+                if self.input_text.strip():  # Vérifie que le message n'est pas vide
+                    try:
+                        # Envoie le message
+                        network.send_chat_message(self.input_text)
+                        # Ajoute le message localement
+                        self.add_message("Vous", self.input_text)
+                    except Exception as e:
+                        print(f"Erreur lors de l'envoi du message : {e}")
                     self.input_text = ""
                 self.input_active = False
                 return True
