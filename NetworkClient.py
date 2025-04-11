@@ -57,8 +57,24 @@ class NetworkClient:
                         elif isinstance(loaded_data, dict) and 'board' in loaded_data:
                             print("État de jeu complet reçu")
                             self.update_full_game_state(loaded_data)
+                        if isinstance(loaded_data, dict) and 'type' in loaded_data and loaded_data['type'] == 'chat':
+                            message = loaded_data['message']
+                            print(f"Message de chat reçu: {message}")
+                            self.game.chat.add_message("Adversaire", message)
+                            continue
+                        
+                        # Traitement des autres types de données...
+                        if isinstance(loaded_data, tuple) and len(loaded_data) == 2:
+                            start, end = loaded_data
+                            if isinstance(start, tuple) and isinstance(end, tuple):
+                                print(f"Mouvement reçu: {start} -> {end}")
+                                self.update_game_from_network(start, end)
+                        elif isinstance(loaded_data, dict) and 'board' in loaded_data:
+                            print("État de jeu complet reçu")
+                        self.update_full_game_state(loaded_data)
                     except Exception as e:
                         print(f"Erreur lors du traitement des données reçues: {e}")
+                        
 
                 except socket.timeout:
                     # Timeout est normal, continue la boucle
@@ -166,3 +182,19 @@ class NetworkClient:
         
         # Met à jour l'affichage
         pygame.display.flip()
+    def send_chat_message(self, message):
+        """Envoie un message de chat"""
+        if hasattr(self, 'client') and self.client:  # Pour NetworkHost
+            try:
+                data = pickle.dumps({'type': 'chat', 'message': message})
+                self.client.send(data)
+                print(f"Message envoyé: {message}")
+            except Exception as e:
+                print(f"Erreur lors de l'envoi du message: {e}")
+        elif hasattr(self, 'socket') and self.socket:  # Pour NetworkClient
+            try:
+                data = pickle.dumps({'type': 'chat', 'message': message})
+                self.socket.send(data)
+                print(f"Message envoyé: {message}")
+            except Exception as e:
+                print(f"Erreur lors de l'envoi du message: {e}")

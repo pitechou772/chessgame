@@ -10,6 +10,8 @@ from ChessClock import *
 from chess_clock import *
 from chess_pieces import *
 from network import *
+from chatsyteme import ChatSystem
+
 
 pygame.init()
 WIDTH, HEIGHT = (600, 600)
@@ -59,6 +61,7 @@ class ChessGame:
         self.clock = None
         self.time_mode = 'Standard'
         self.game_started = False
+        self.chat = ChatSystem()
 
     def create_board(self):
         """Crée et retourne le plateau initial"""
@@ -99,6 +102,9 @@ class ChessGame:
             font = pygame.font.SysFont('Arial', 36)
             text = font.render(self.game_status, True, WHITE)
             window.blit(text, (WIDTH // 2 - text.get_width() // 2, HEIGHT // 2 - text.get_height() // 2))
+        if hasattr(self, 'chat'):
+                small_font = pygame.font.SysFont('Arial', 16)
+                self.chat.draw(window, small_font, WIDTH, HEIGHT)
 
     def select_piece(self, pos):
         """Gère la sélection d'une pièce et son déplacement"""
@@ -489,6 +495,31 @@ class ChessGame:
             else:
                 self.game_status = 'Pat! Match nul!'
 
+    def host_game(self, port=5555):
+        """Démarre un jeu en tant qu'hôte"""
+        self.is_host = True
+        self.player_color = 'w'  
+        self.network = NetworkHost(self, port)
+        self.network.start()
+        return True 
+        
+    # Dans NetworkHost, ajoutez un mécanisme pour informer le jeu quand un client se connecte:
+    def on_client_connected(self):
+        """Appelé quand un client se connecte"""
+        # Démarrer l'horloge seulement maintenant
+        self.game.start_game()
+        self.send_game_state()  # Envoyer l'état complet du jeu, y compris l'horloge
+    def join_game(self, host, port=5555):
+        """Rejoint un jeu en tant que client"""
+        self.is_host = False
+        self.player_color = 'b'  # Le client joue les noirs
+        self.network = NetworkClient(self, host, port)
+        connected = self.network.connect()
+        if connected:
+            self.network.start()
+        return connected
+
+
 def main():
     """Fonction principale du jeu"""
     game = ChessGame()
@@ -614,8 +645,8 @@ def main():
                                     if validate_button.collidepoint(mouse_pos):
                                         input_active = False
                                     elif back_button.collidepoint(mouse_pos):
-                                        input_active = False
-                                        host_ip = ''
+                                            input_active = False
+                                            host_ip = ''
                         if running and host_ip:
                             if game.join_game(host_ip):
                                 menu_active = False
@@ -623,10 +654,17 @@ def main():
                         running = False
                         menu_active = False
             clock.tick(30)
+  
         while not menu_active and running:
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     running = False
+                    
+                # Traite les événements du chat d'abord
+                if game.network and hasattr(game, 'chat'):
+                    if game.chat.handle_event(event, game.network):
+                        continue  # L'événement a été traité par le chat
+                    
                 if event.type == pygame.MOUSEBUTTONDOWN:
                     if event.button == 1:
                         game.select_piece(event.pos)
@@ -638,10 +676,12 @@ def main():
                         if game.clock:
                             game.clock.stop()
                         menu_active = True
-            game.draw_board(WINDOW)
-            pygame.display.flip()
-            clock.tick(60)
-    if game.network:
+                    elif event.key == pygame.K_TAB:  # Touche pour activer/désactiver le chat
+                        if hasattr(game, 'chat'):
+                            game.chat.chat_visible = not game.chat.chat_visible
+        game.draw_board(WINDOW)
+        pygame.display.flip()
+        clock.tick(60)
         game.network.stop()
     pygame.quit()
     sys.exit()
