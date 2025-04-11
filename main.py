@@ -1,17 +1,13 @@
 import pygame
 import sys
+import time
 import socket
 import threading
 import pickle
-import time
-from NetworkHost import *
-from NetworkClient import *
-from ChessClock import *
-from chess_clock import *
-from chess_pieces import *
-from network import *
+from chess_pieces import create_piece
+from chess_clock import ChessClock
+from network import NetworkHost, NetworkClient
 from chatsyteme import ChatSystem
-
 
 pygame.init()
 WIDTH, HEIGHT = (600, 600)
@@ -40,10 +36,10 @@ def load_images():
     return images
 
 class ChessGame:
-
     def __init__(self):
         """Initialise une nouvelle partie d'échecs"""
         self.board = self.create_board()
+        self.piece_objects = self.create_piece_objects()  # Crée les objets de pièces
         self.selected_piece = None
         self.turn = 'w'
         self.valid_moves = []
@@ -65,8 +61,39 @@ class ChessGame:
 
     def create_board(self):
         """Crée et retourne le plateau initial"""
-        board = [['bR', 'bN', 'bB', 'bQ', 'bK', 'bB', 'bN', 'bR'], ['bp', 'bp', 'bp', 'bp', 'bp', 'bp', 'bp', 'bp'], ['--', '--', '--', '--', '--', '--', '--', '--'], ['--', '--', '--', '--', '--', '--', '--', '--'], ['--', '--', '--', '--', '--', '--', '--', '--'], ['--', '--', '--', '--', '--', '--', '--', '--'], ['wp', 'wp', 'wp', 'wp', 'wp', 'wp', 'wp', 'wp'], ['wR', 'wN', 'wB', 'wQ', 'wK', 'wB', 'wN', 'wR']]
+        board = [
+            ['bR', 'bN', 'bB', 'bQ', 'bK', 'bB', 'bN', 'bR'],
+            ['bp', 'bp', 'bp', 'bp', 'bp', 'bp', 'bp', 'bp'],
+            ['--', '--', '--', '--', '--', '--', '--', '--'],
+            ['--', '--', '--', '--', '--', '--', '--', '--'],
+            ['--', '--', '--', '--', '--', '--', '--', '--'],
+            ['--', '--', '--', '--', '--', '--', '--', '--'],
+            ['wp', 'wp', 'wp', 'wp', 'wp', 'wp', 'wp', 'wp'],
+            ['wR', 'wN', 'wB', 'wQ', 'wK', 'wB', 'wN', 'wR']
+        ]
         return board
+    
+    def create_piece_objects(self):
+        """Crée les objets de pièces à partir du tableau"""
+        piece_objects = [[None for _ in range(8)] for _ in range(8)]
+        for row in range(8):
+            for col in range(8):
+                piece_code = self.board[row][col]
+                if piece_code != '--':
+                    piece_objects[row][col] = create_piece(piece_code, (row, col))
+        return piece_objects
+    
+    def update_piece_objects(self):
+        """Met à jour les objets de pièces après un mouvement"""
+        for row in range(8):
+            for col in range(8):
+                piece_code = self.board[row][col]
+                if piece_code != '--' and self.piece_objects[row][col] is None:
+                    self.piece_objects[row][col] = create_piece(piece_code, (row, col))
+                elif piece_code == '--':
+                    self.piece_objects[row][col] = None
+                elif self.piece_objects[row][col] and self.piece_objects[row][col].notation != piece_code:
+                    self.piece_objects[row][col] = create_piece(piece_code, (row, col))
 
     def draw_board(self, window):
         """Dessine le plateau et les pièces"""
@@ -81,13 +108,17 @@ class ChessGame:
                     font = pygame.font.SysFont('Arial', 30)
                     text = font.render(piece, True, WHITE if piece[0] == 'b' else BLACK)
                     window.blit(text, (col * SQUARE_SIZE + 15, row * SQUARE_SIZE + 15))
+                
                 if self.selected_piece == (row, col):
                     pygame.draw.rect(window, HIGHLIGHT, pygame.Rect(col * SQUARE_SIZE, row * SQUARE_SIZE, SQUARE_SIZE, SQUARE_SIZE), 3)
+                
                 if (row, col) in self.valid_moves:
                     if self.board[row][col] != '--':
                         pygame.draw.circle(window, MOVE_HIGHLIGHT, (col * SQUARE_SIZE + SQUARE_SIZE // 2, row * SQUARE_SIZE + SQUARE_SIZE // 2), SQUARE_SIZE // 2 - 5, 3)
                     else:
                         pygame.draw.circle(window, MOVE_HIGHLIGHT, (col * SQUARE_SIZE + SQUARE_SIZE // 2, row * SQUARE_SIZE + SQUARE_SIZE // 2), SQUARE_SIZE // 6)
+        
+        # Afficher les rois en échec
         for color in ['w', 'b']:
             if self.in_check[color]:
                 king_row, king_col = self.king_positions[color]
@@ -95,6 +126,8 @@ class ChessGame:
                 s = pygame.Surface((SQUARE_SIZE, SQUARE_SIZE), pygame.SRCALPHA)
                 s.fill(CHECK_HIGHLIGHT)
                 window.blit(s, king_rect)
+        
+        # Afficher le statut de la partie
         if self.game_status != 'Playing':
             status_surface = pygame.Surface((WIDTH, 50), pygame.SRCALPHA)
             status_surface.fill((0, 0, 0, 180))
@@ -102,39 +135,69 @@ class ChessGame:
             font = pygame.font.SysFont('Arial', 36)
             text = font.render(self.game_status, True, WHITE)
             window.blit(text, (WIDTH // 2 - text.get_width() // 2, HEIGHT // 2 - text.get_height() // 2))
-        if hasattr(self, 'chat'):
-                small_font = pygame.font.SysFont('Arial', 16)
-                self.chat.draw(window, small_font, WIDTH, HEIGHT)
+        
+        # Afficher l'horloge
+        if self.clock:
+            clock_font = pygame.font.SysFont('Arial', 24)
+            self.clock.draw(window, clock_font, WIDTH, HEIGHT)
+            
+        # Afficher le chat
+        if hasattr(self, 'chat') and self.chat.chat_visible:
+            small_font = pygame.font.SysFont('Arial', 16)
+            self.chat.draw(window, small_font, WIDTH, HEIGHT)
 
     def select_piece(self, pos):
         """Gère la sélection d'une pièce et son déplacement"""
         if self.game_status != 'Playing':
             return
+            
         col, row = (pos[0] // SQUARE_SIZE, pos[1] // SQUARE_SIZE)
+        
+        # Vérifier si c'est le tour du joueur
         if self.player_color and self.turn != self.player_color:
             return
+            
         if self.selected_piece:
+            # Si on clique sur la même pièce, désélectionner
             if self.selected_piece == (row, col):
                 self.selected_piece = None
                 self.valid_moves = []
                 return
+                
+            # Si on clique sur une case valide, déplacer la pièce
             if (row, col) in self.valid_moves:
                 self.move_piece(self.selected_piece, (row, col))
                 self.selected_piece = None
                 self.valid_moves = []
                 return
+                
+            # Si on clique sur une autre pièce de même couleur, la sélectionner
             piece = self.board[row][col]
             if piece != '--' and piece[0] == self.turn:
                 self.selected_piece = (row, col)
                 self.valid_moves = self.get_valid_moves((row, col))
                 return
+                
+            # Sinon, désélectionner
             self.selected_piece = None
             self.valid_moves = []
         else:
+            # Sélectionner une pièce si elle est de la bonne couleur
             piece = self.board[row][col]
             if piece != '--' and piece[0] == self.turn:
                 self.selected_piece = (row, col)
                 self.valid_moves = self.get_valid_moves((row, col))
+
+    def get_piece_moves(self, pos):
+        """Obtient tous les mouvements possibles pour une pièce spécifique en utilisant les objets de pièces"""
+        row, col = pos
+        piece_obj = self.piece_objects[row][col]
+        
+        if not piece_obj:
+            return []
+            
+        # Utilise la méthode get_moves définie dans chess_pieces.py
+        return piece_obj.get_moves(self.board)
 
     def get_all_possible_moves(self, color):
         """Obtient tous les mouvements possibles pour une couleur, sans vérifier l'échec"""
@@ -151,6 +214,7 @@ class ChessGame:
         """Vérifie si le roi de la couleur spécifiée est en échec"""
         king_row, king_col = self.king_positions[color]
         opponent_color = 'b' if color == 'w' else 'w'
+        
         for start_pos, end_pos in self.get_all_possible_moves(opponent_color):
             if end_pos == (king_row, king_col):
                 return True
@@ -163,150 +227,37 @@ class ChessGame:
         color = piece[0]
         possible_moves = self.get_piece_moves(pos)
         valid_moves = []
+        
         for move in possible_moves:
             end_row, end_col = move
             captured_piece = self.board[end_row][end_col]
+            
+            # Sauvegarder l'état actuel
             king_pos = self.king_positions[color]
+            
+            # Si c'est le roi qui bouge, mettre à jour sa position
             if piece[1] == 'K':
                 self.king_positions[color] = (end_row, end_col)
+                
+            # Simuler le mouvement
             self.board[end_row][end_col] = piece
             self.board[row][col] = '--'
+            
+            # Vérifier si le roi est en échec après ce mouvement
             in_check = self.is_in_check(color)
+            
+            # Restaurer l'état précédent
             self.board[row][col] = piece
             self.board[end_row][end_col] = captured_piece
+            
             if piece[1] == 'K':
                 self.king_positions[color] = king_pos
+                
+            # Si le mouvement ne met pas le roi en échec, il est valide
             if not in_check:
                 valid_moves.append(move)
+                
         return valid_moves
-
-    def get_piece_moves(self, pos):
-        """Obtient tous les mouvements possibles pour une pièce spécifique, sans tenir compte de l'échec"""
-        row, col = pos
-        piece = self.board[row][col]
-        piece_type = piece[1]
-        color = piece[0]
-        moves = []
-        if piece_type == 'p':
-            direction = 1 if color == 'b' else -1
-            if 0 <= row + direction < 8 and self.board[row + direction][col] == '--':
-                moves.append((row + direction, col))
-                if color == 'w' and row == 6 or (color == 'b' and row == 1):
-                    if self.board[row + 2 * direction][col] == '--':
-                        moves.append((row + 2 * direction, col))
-            for offset in [-1, 1]:
-                if 0 <= row + direction < 8 and 0 <= col + offset < 8:
-                    target = self.board[row + direction][col + offset]
-                    if target != '--' and target[0] != color:
-                        moves.append((row + direction, col + offset))
-                    if self.en_passant_target == (row + direction, col + offset):
-                        moves.append((row + direction, col + offset))
-        elif piece_type == 'R':
-            directions = [(-1, 0), (0, 1), (1, 0), (0, -1)]
-            for dr, dc in directions:
-                for i in range(1, 8):
-                    r, c = (row + i * dr, col + i * dc)
-                    if not (0 <= r < 8 and 0 <= c < 8):
-                        break
-                    target = self.board[r][c]
-                    if target == '--':
-                        moves.append((r, c))
-                    elif target[0] != color:
-                        moves.append((r, c))
-                        break
-                    else:
-                        break
-        elif piece_type == 'N':
-            knight_moves = [(row - 2, col - 1), (row - 2, col + 1), (row - 1, col - 2), (row - 1, col + 2), (row + 1, col - 2), (row + 1, col + 2), (row + 2, col - 1), (row + 2, col + 1)]
-            for move in knight_moves:
-                r, c = move
-                if 0 <= r < 8 and 0 <= c < 8:
-                    target = self.board[r][c]
-                    if target == '--' or target[0] != color:
-                        moves.append((r, c))
-        elif piece_type == 'B':
-            directions = [(-1, -1), (-1, 1), (1, -1), (1, 1)]
-            for dr, dc in directions:
-                for i in range(1, 8):
-                    r, c = (row + i * dr, col + i * dc)
-                    if not (0 <= r < 8 and 0 <= c < 8):
-                        break
-                    target = self.board[r][c]
-                    if target == '--':
-                        moves.append((r, c))
-                    elif target[0] != color:
-                        moves.append((r, c))
-                        break
-                    else:
-                        break
-        elif piece_type == 'Q':
-            directions = [(-1, 0), (0, 1), (1, 0), (0, -1), (-1, -1), (-1, 1), (1, -1), (1, 1)]
-            for dr, dc in directions:
-                for i in range(1, 8):
-                    r, c = (row + i * dr, col + i * dc)
-                    if not (0 <= r < 8 and 0 <= c < 8):
-                        break
-                    target = self.board[r][c]
-                    if target == '--':
-                        moves.append((r, c))
-                    elif target[0] != color:
-                        moves.append((r, c))
-                        break
-                    else:
-                        break
-        elif piece_type == 'K':
-            directions = [(-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1)]
-            for dr, dc in directions:
-                r, c = (row + dr, col + dc)
-                if 0 <= r < 8 and 0 <= c < 8:
-                    target = self.board[r][c]
-                    if target == '--' or target[0] != color:
-                        moves.append((r, c))
-            if self.castling_rights[color]['kingside']:
-                if self.can_castle_kingside(color):
-                    moves.append((row, col + 2))
-            if self.castling_rights[color]['queenside']:
-                if self.can_castle_queenside(color):
-                    moves.append((row, col - 2))
-        return moves
-
-    def can_castle_kingside(self, color):
-        """Vérifie si le roque côté roi est possible"""
-        row = 7 if color == 'w' else 0
-        if self.board[row][5] != '--' or self.board[row][6] != '--':
-            return False
-        if self.board[row][7] != color + 'R':
-            return False
-        if self.is_in_check(color):
-            return False
-        king_pos = self.king_positions[color]
-        self.board[row][4], self.board[row][5] = ('--', color + 'K')
-        self.king_positions[color] = (row, 5)
-        middle_square_attacked = self.is_in_check(color)
-        self.board[row][4], self.board[row][5] = (color + 'K', '--')
-        self.king_positions[color] = king_pos
-        if middle_square_attacked:
-            return False
-        return True
-
-    def can_castle_queenside(self, color):
-        """Vérifie si le roque côté dame est possible"""
-        row = 7 if color == 'w' else 0
-        if self.board[row][1] != '--' or self.board[row][2] != '--' or self.board[row][3] != '--':
-            return False
-        if self.board[row][0] != color + 'R':
-            return False
-        if self.is_in_check(color):
-            return False
-        king_pos = self.king_positions[color]
-        self.board[row][4], self.board[row][3] = ('--', color + 'K')
-        self.king_positions[color] = (row, 3)
-        middle_square_attacked = self.is_in_check(color)
-        self.board[row][4], self.board[row][3] = (color + 'K', '--')
-        self.king_positions[color] = king_pos
-        if middle_square_attacked:
-            return False
-        return True
 
     def move_piece(self, start, end):
         """Déplace une pièce et gère les règles spéciales (promotion, roque, etc.)"""
@@ -314,44 +265,85 @@ class ChessGame:
         end_row, end_col = end
         moved_piece = self.board[start_row][start_col]
         captured_piece = self.board[end_row][end_col]
+        
+        # Enregistrer le mouvement dans l'historique
         self.move_history.append((start, end, moved_piece, captured_piece))
+        
+        # Gérer le roque
         if moved_piece[1] == 'K' and abs(start_col - end_col) == 2:
-            if end_col > start_col:
+            if end_col > start_col:  # Roque côté roi
                 self.board[end_row][end_col - 1] = self.board[end_row][7]
                 self.board[end_row][7] = '--'
-            else:
+            else:  # Roque côté dame
                 self.board[end_row][end_col + 1] = self.board[end_row][0]
                 self.board[end_row][0] = '--'
-        if moved_piece[1] == 'p' and start_col != end_col and (captured_piece == '--'):
+        
+        # Gérer la prise en passant
+        if moved_piece[1] == 'p' and start_col != end_col and captured_piece == '--':
             self.board[start_row][end_col] = '--'
+        
+        # Réinitialiser la cible de prise en passant
         self.en_passant_target = None
+        
+        # Définir une nouvelle cible de prise en passant si un pion avance de deux cases
         if moved_piece[1] == 'p' and abs(start_row - end_row) == 2:
             self.en_passant_target = (start_row + (end_row - start_row) // 2, start_col)
+        
+        # Déplacer la pièce
         self.board[end_row][end_col] = moved_piece
         self.board[start_row][start_col] = '--'
+        
+        # Mettre à jour les objets de pièces
+        self.update_piece_objects()
+        
+        # Promotion du pion
         if moved_piece[1] == 'p' and (end_row == 0 or end_row == 7):
             self.board[end_row][end_col] = moved_piece[0] + 'Q'
+            self.update_piece_objects()
+        
+        # Mettre à jour la position du roi
         if moved_piece[1] == 'K':
             self.king_positions[moved_piece[0]] = (end_row, end_col)
+        
+        # Mettre à jour les droits de roque
         if moved_piece[1] == 'K':
             self.castling_rights[moved_piece[0]]['kingside'] = False
             self.castling_rights[moved_piece[0]]['queenside'] = False
         elif moved_piece[1] == 'R':
-            if start_col == 7:
+            if start_col == 7:  # Tour côté roi
                 self.castling_rights[moved_piece[0]]['kingside'] = False
-            elif start_col == 0:
+            elif start_col == 0:  # Tour côté dame
                 self.castling_rights[moved_piece[0]]['queenside'] = False
+        
+        # Changer de tour
         self.turn = 'b' if self.turn == 'w' else 'w'
+        
+        # Gérer l'horloge
+        if self.clock and self.game_started:
+            self.clock.switch()
+        
+        # Vérifier l'échec
         self.in_check['w'] = self.is_in_check('w')
         self.in_check['b'] = self.is_in_check('b')
+        
+        # Vérifier fin de partie
         self.check_game_over()
+        
+        # Envoyer le mouvement et l'état du jeu via le réseau
         if self.network:
             self.network.send_move(start, end)
             time.sleep(0.1)
             self.network.send_game_state()
 
     def check_game_over(self):
-        """Vérifie si la partie est terminée (échec et mat ou pat)"""
+        """Vérifie si la partie est terminée (échec et mat, pat ou temps écoulé)"""
+        # Vérifier si le temps est écoulé
+        if self.clock and self.clock.game_over:
+            winner = 'Blancs' if self.clock.timeout_color == 'b' else 'Noirs'
+            self.game_status = f'Temps écoulé! {winner} gagnent!'
+            return
+        
+        # Vérifier si le joueur actuel a des mouvements légaux
         has_valid_moves = False
         for row in range(8):
             for col in range(8):
@@ -363,6 +355,8 @@ class ChessGame:
                         break
             if has_valid_moves:
                 break
+        
+        # Si aucun mouvement légal, c'est soit échec et mat soit pat
         if not has_valid_moves:
             if self.in_check[self.turn]:
                 winner = 'Blancs' if self.turn == 'b' else 'Noirs'
@@ -374,13 +368,13 @@ class ChessGame:
         """Configure l'horloge selon le mode de temps choisi"""
         self.time_mode = time_mode
         if time_mode == 'Blitz':
-            self.clock = ChessClock(180, 2)
+            self.clock = ChessClock(180, 2)  # 3 minutes + 2 secondes par coup
         elif time_mode == 'Rapide':
-            self.clock = ChessClock(600, 5)
+            self.clock = ChessClock(600, 5)  # 10 minutes + 5 secondes par coup
         elif time_mode == 'Standard':
-            self.clock = ChessClock(1800, 0)
+            self.clock = ChessClock(1800, 0)  # 30 minutes sans incrément
         else:
-            self.clock = ChessClock(600, 0)
+            self.clock = ChessClock(600, 0)  # 10 minutes par défaut
         self.game_started = False
 
     def start_game(self):
@@ -389,126 +383,14 @@ class ChessGame:
             self.clock.start('w')
             self.game_started = True
 
-    def move_piece(self, start, end):
-        """Déplace une pièce et gère les règles spéciales (promotion, roque, etc.)"""
-        start_row, start_col = start
-        end_row, end_col = end
-        moved_piece = self.board[start_row][start_col]
-        captured_piece = self.board[end_row][end_col]
-        self.move_history.append((start, end, moved_piece, captured_piece))
-        if moved_piece[1] == 'K' and abs(start_col - end_col) == 2:
-            if end_col > start_col:
-                self.board[end_row][end_col - 1] = self.board[end_row][7]
-                self.board[end_row][7] = '--'
-            else:
-                self.board[end_row][end_col + 1] = self.board[end_row][0]
-                self.board[end_row][0] = '--'
-        if moved_piece[1] == 'p' and start_col != end_col and (captured_piece == '--'):
-            self.board[start_row][end_col] = '--'
-        self.en_passant_target = None
-        if moved_piece[1] == 'p' and abs(start_row - end_row) == 2:
-            self.en_passant_target = (start_row + (end_row - start_row) // 2, start_col)
-        self.board[end_row][end_col] = moved_piece
-        self.board[start_row][start_col] = '--'
-        if moved_piece[1] == 'p' and (end_row == 0 or end_row == 7):
-            self.board[end_row][end_col] = moved_piece[0] + 'Q'
-        if moved_piece[1] == 'K':
-            self.king_positions[moved_piece[0]] = (end_row, end_col)
-        if moved_piece[1] == 'K':
-            self.castling_rights[moved_piece[0]]['kingside'] = False
-            self.castling_rights[moved_piece[0]]['queenside'] = False
-        elif moved_piece[1] == 'R':
-            if start_col == 7:
-                self.castling_rights[moved_piece[0]]['kingside'] = False
-            elif start_col == 0:
-                self.castling_rights[moved_piece[0]]['queenside'] = False
-        self.turn = 'b' if self.turn == 'w' else 'w'
-        if self.clock and self.game_started:
-            self.clock.switch()
-        self.in_check['w'] = self.is_in_check('w')
-        self.in_check['b'] = self.is_in_check('b')
-        self.check_game_over()
-        if self.network:
-            self.network.send_move(start, end)
-            time.sleep(0.1)
-            self.network.send_game_state()
-
-    def draw_board(self, window):
-        """Dessine le plateau et les pièces"""
-        for row in range(8):
-            for col in range(8):
-                color = LIGHT_SQUARE if (row + col) % 2 == 0 else DARK_SQUARE
-                pygame.draw.rect(window, color, pygame.Rect(col * SQUARE_SIZE, row * SQUARE_SIZE, SQUARE_SIZE, SQUARE_SIZE))
-                piece = self.board[row][col]
-                if piece != '--' and self.images.get(piece):
-                    window.blit(self.images[piece], pygame.Rect(col * SQUARE_SIZE, row * SQUARE_SIZE, SQUARE_SIZE, SQUARE_SIZE))
-                elif piece != '--':
-                    font = pygame.font.SysFont('Arial', 30)
-                    text = font.render(piece, True, WHITE if piece[0] == 'b' else BLACK)
-                    window.blit(text, (col * SQUARE_SIZE + 15, row * SQUARE_SIZE + 15))
-                if self.selected_piece == (row, col):
-                    pygame.draw.rect(window, HIGHLIGHT, pygame.Rect(col * SQUARE_SIZE, row * SQUARE_SIZE, SQUARE_SIZE, SQUARE_SIZE), 3)
-                if (row, col) in self.valid_moves:
-                    if self.board[row][col] != '--':
-                        pygame.draw.circle(window, MOVE_HIGHLIGHT, (col * SQUARE_SIZE + SQUARE_SIZE // 2, row * SQUARE_SIZE + SQUARE_SIZE // 2), SQUARE_SIZE // 2 - 5, 3)
-                    else:
-                        pygame.draw.circle(window, MOVE_HIGHLIGHT, (col * SQUARE_SIZE + SQUARE_SIZE // 2, row * SQUARE_SIZE + SQUARE_SIZE // 2), SQUARE_SIZE // 6)
-        for color in ['w', 'b']:
-            if self.in_check[color]:
-                king_row, king_col = self.king_positions[color]
-                king_rect = pygame.Rect(king_col * SQUARE_SIZE, king_row * SQUARE_SIZE, SQUARE_SIZE, SQUARE_SIZE)
-                s = pygame.Surface((SQUARE_SIZE, SQUARE_SIZE), pygame.SRCALPHA)
-                s.fill(CHECK_HIGHLIGHT)
-                window.blit(s, king_rect)
-        if self.game_status != 'Playing':
-            status_surface = pygame.Surface((WIDTH, 50), pygame.SRCALPHA)
-            status_surface.fill((0, 0, 0, 180))
-            window.blit(status_surface, (0, HEIGHT // 2 - 25))
-            font = pygame.font.SysFont('Arial', 36)
-            text = font.render(self.game_status, True, WHITE)
-            window.blit(text, (WIDTH // 2 - text.get_width() // 2, HEIGHT // 2 - text.get_height() // 2))
-        if self.clock:
-            clock_font = pygame.font.SysFont('Arial', 24)
-            self.clock.draw(window, clock_font, WIDTH, HEIGHT)
-
-    def check_game_over(self):
-        """Vérifie si la partie est terminée (échec et mat, pat ou temps écoulé)"""
-        if self.clock and self.clock.game_over:
-            winner = 'Blancs' if self.clock.timeout_color == 'b' else 'Noirs'
-            self.game_status = f'Temps écoulé! {winner} gagnent!'
-            return
-        has_valid_moves = False
-        for row in range(8):
-            for col in range(8):
-                piece = self.board[row][col]
-                if piece != '--' and piece[0] == self.turn:
-                    moves = self.get_valid_moves((row, col))
-                    if moves:
-                        has_valid_moves = True
-                        break
-            if has_valid_moves:
-                break
-        if not has_valid_moves:
-            if self.in_check[self.turn]:
-                winner = 'Blancs' if self.turn == 'b' else 'Noirs'
-                self.game_status = f'Échec et mat! {winner} gagnent!'
-            else:
-                self.game_status = 'Pat! Match nul!'
-
     def host_game(self, port=5555):
         """Démarre un jeu en tant qu'hôte"""
         self.is_host = True
-        self.player_color = 'w'  
+        self.player_color = 'w'  # L'hôte joue les blancs
         self.network = NetworkHost(self, port)
         self.network.start()
-        return True 
-        
-    # Dans NetworkHost, ajoutez un mécanisme pour informer le jeu quand un client se connecte:
-    def on_client_connected(self):
-        """Appelé quand un client se connecte"""
-        # Démarrer l'horloge seulement maintenant
-        self.game.start_game()
-        self.send_game_state()  # Envoyer l'état complet du jeu, y compris l'horloge
+        return True
+
     def join_game(self, host, port=5555):
         """Rejoint un jeu en tant que client"""
         self.is_host = False
@@ -526,63 +408,92 @@ def main():
     clock = pygame.time.Clock()
     running = True
     menu_active = True
-    time_selection_active = False
+    
+    # Polices
     font = pygame.font.SysFont('Arial', 36)
     small_font = pygame.font.SysFont('Arial', 24)
+    
     while running:
+        # Menu principal
         while menu_active and running:
             WINDOW.fill(LIGHT_SQUARE)
+            
+            # Titre
             title = font.render("Jeu d'Échecs Multijoueur", True, BLACK)
             WINDOW.blit(title, (WIDTH // 2 - title.get_width() // 2, 100))
+            
+            # Bouton pour héberger une partie
             host_button = pygame.Rect(WIDTH // 2 - 100, 200, 200, 50)
             pygame.draw.rect(WINDOW, DARK_SQUARE, host_button)
             host_text = font.render('Héberger', True, WHITE)
             WINDOW.blit(host_text, (WIDTH // 2 - host_text.get_width() // 2, 210))
+            
+            # Bouton pour rejoindre une partie
             join_button = pygame.Rect(WIDTH // 2 - 100, 300, 200, 50)
             pygame.draw.rect(WINDOW, DARK_SQUARE, join_button)
             join_text = font.render('Rejoindre', True, WHITE)
             WINDOW.blit(join_text, (WIDTH // 2 - join_text.get_width() // 2, 310))
+            
+            # Bouton pour quitter
             quit_button = pygame.Rect(WIDTH // 2 - 100, 400, 200, 50)
             pygame.draw.rect(WINDOW, DARK_SQUARE, quit_button)
             quit_text = font.render('Quitter', True, WHITE)
             WINDOW.blit(quit_text, (WIDTH // 2 - quit_text.get_width() // 2, 410))
+            
             pygame.display.flip()
+            
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     running = False
                     menu_active = False
+                    
                 if event.type == pygame.MOUSEBUTTONDOWN:
                     mouse_pos = pygame.mouse.get_pos()
+                    
+                    # Héberger une partie
                     if host_button.collidepoint(mouse_pos):
                         time_selection_active = True
                         selected_mode = None
+                        
+                        # Menu de sélection du mode de temps
                         while time_selection_active and running:
                             WINDOW.fill(LIGHT_SQUARE)
+                            
                             mode_title = font.render('Choisissez un mode de jeu', True, BLACK)
                             WINDOW.blit(mode_title, (WIDTH // 2 - mode_title.get_width() // 2, 100))
+                            
+                            # Bouton Blitz
                             blitz_button = pygame.Rect(WIDTH // 2 - 100, 200, 200, 50)
                             pygame.draw.rect(WINDOW, DARK_SQUARE, blitz_button)
                             blitz_text = font.render('Blitz', True, WHITE)
                             WINDOW.blit(blitz_text, (WIDTH // 2 - blitz_text.get_width() // 2, 210))
                             blitz_desc = small_font.render('3min + 2sec', True, BLACK)
                             WINDOW.blit(blitz_desc, (WIDTH // 2 - blitz_desc.get_width() // 2, 260))
+                            
+                            # Bouton Rapide
                             rapid_button = pygame.Rect(WIDTH // 2 - 100, 300, 200, 50)
                             pygame.draw.rect(WINDOW, DARK_SQUARE, rapid_button)
                             rapid_text = font.render('Rapide', True, WHITE)
                             WINDOW.blit(rapid_text, (WIDTH // 2 - rapid_text.get_width() // 2, 310))
                             rapid_desc = small_font.render('10min + 5sec', True, BLACK)
                             WINDOW.blit(rapid_desc, (WIDTH // 2 - rapid_desc.get_width() // 2, 360))
+                            
+                            # Bouton Standard
                             standard_button = pygame.Rect(WIDTH // 2 - 100, 400, 200, 50)
                             pygame.draw.rect(WINDOW, DARK_SQUARE, standard_button)
                             standard_text = font.render('Standard', True, WHITE)
                             WINDOW.blit(standard_text, (WIDTH // 2 - standard_text.get_width() // 2, 410))
                             standard_desc = small_font.render('30min', True, BLACK)
                             WINDOW.blit(standard_desc, (WIDTH // 2 - standard_desc.get_width() // 2, 460))
+                            
+                            # Bouton Retour
                             back_button = pygame.Rect(WIDTH // 2 - 100, 500, 200, 50)
                             pygame.draw.rect(WINDOW, GRAY, back_button)
                             back_text = font.render('Retour', True, WHITE)
                             WINDOW.blit(back_text, (WIDTH // 2 - back_text.get_width() // 2, 510))
+                            
                             pygame.display.flip()
+                            
                             for mode_event in pygame.event.get():
                                 if mode_event.type == pygame.QUIT:
                                     time_selection_active = False
@@ -602,33 +513,45 @@ def main():
                                         time_selection_active = False
                                         selected_mode = None
                             clock.tick(30)
+                            
+                        # Démarrer le jeu en tant qu'hôte avec le mode sélectionné
                         if selected_mode:
                             game.setup_clock(selected_mode)
                             if game.host_game():
-                                game.start_game()
                                 menu_active = False
+                    
+                    # Rejoindre une partie
                     elif join_button.collidepoint(mouse_pos):
                         input_active = True
                         host_ip = ''
                         input_font = pygame.font.SysFont('Arial', 30)
+                        
+                        # Saisie de l'adresse IP
                         while input_active and running:
                             WINDOW.fill(LIGHT_SQUARE)
+                            
                             prompt = font.render("Entrez l'adresse IP de l'hôte:", True, BLACK)
                             WINDOW.blit(prompt, (WIDTH // 2 - prompt.get_width() // 2, 200))
+                            
                             input_rect = pygame.Rect(WIDTH // 2 - 150, 250, 300, 40)
                             pygame.draw.rect(WINDOW, WHITE, input_rect)
                             pygame.draw.rect(WINDOW, BLACK, input_rect, 2)
+                            
                             input_surface = input_font.render(host_ip, True, BLACK)
                             WINDOW.blit(input_surface, (input_rect.x + 5, input_rect.y + 5))
+                            
                             validate_button = pygame.Rect(WIDTH // 2 - 100, 320, 200, 50)
                             pygame.draw.rect(WINDOW, DARK_SQUARE, validate_button)
                             validate_text = font.render('Valider', True, WHITE)
                             WINDOW.blit(validate_text, (WIDTH // 2 - validate_text.get_width() // 2, 330))
+                            
                             back_button = pygame.Rect(WIDTH // 2 - 100, 400, 200, 50)
                             pygame.draw.rect(WINDOW, GRAY, back_button)
                             back_text = font.render('Retour', True, WHITE)
                             WINDOW.blit(back_text, (WIDTH // 2 - back_text.get_width() // 2, 410))
+                            
                             pygame.display.flip()
+                            
                             for input_event in pygame.event.get():
                                 if input_event.type == pygame.QUIT:
                                     input_active = False
@@ -645,14 +568,19 @@ def main():
                                     if validate_button.collidepoint(mouse_pos):
                                         input_active = False
                                     elif back_button.collidepoint(mouse_pos):
-                                            input_active = False
-                                            host_ip = ''
+                                        input_active = False
+                                        host_ip = ''
+                        
+                        # Rejoindre la partie avec l'IP saisie
                         if running and host_ip:
                             if game.join_game(host_ip):
                                 menu_active = False
+                    
+                    # Quitter le jeu
                     elif quit_button.collidepoint(mouse_pos):
                         running = False
                         menu_active = False
+            
             clock.tick(30)
   
         while not menu_active and running:
